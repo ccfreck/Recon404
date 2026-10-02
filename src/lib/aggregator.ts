@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import Parser from "rss-parser";
 import { FEEDS, type Category, type Priority } from "./feeds";
 
@@ -21,8 +23,30 @@ export interface AggregateResult {
 }
 
 const TTL_MS = 5 * 60 * 1000;
-let cache: { data: AggregateResult; expires: number } | null = null;
+const CACHE_FILE = path.join(process.cwd(), ".cache", "articles.json");
+
+let cache: { data: AggregateResult; expires: number } | null = loadDiskCache();
 let inflight: Promise<AggregateResult> | null = null;
+
+function loadDiskCache(): { data: AggregateResult; expires: number } | null {
+  try {
+    const raw = fs.readFileSync(CACHE_FILE, "utf8");
+    const data = JSON.parse(raw) as AggregateResult;
+    if (!data.articles || !data.fetchedAt) return null;
+    return { data, expires: new Date(data.fetchedAt).getTime() + TTL_MS };
+  } catch {
+    return null;
+  }
+}
+
+function saveDiskCache(data: AggregateResult) {
+  try {
+    fs.mkdirSync(path.dirname(CACHE_FILE), { recursive: true });
+    fs.writeFileSync(CACHE_FILE, JSON.stringify(data));
+  } catch {
+    // best effort
+  }
+}
 
 const parser = new Parser({
   timeout: 15000,
@@ -88,17 +112,32 @@ async function fetchAll(): Promise<AggregateResult> {
   };
 }
 
-export async function getArticles(): Promise<AggregateResult> {
-  const now = Date.now();
-  if (cache && cache.expires > now) return cache.data;
+function refresh(): Promise<AggregateResult> {
   if (inflight) return inflight;
   inflight = fetchAll()
     .then((data) => {
       cache = { data, expires: Date.now() + TTL_MS };
+      saveDiskCache(data);
       return data;
     })
     .finally(() => {
       inflight = null;
     });
   return inflight;
+}
+
+export async function getArticles(): Promise<AggregateResult> {
+  const now = Date.now();
+  if (cache) {
+    if (cache.expires > now) return cache.data;
+    // stale: serve old data immediately, refresh in background
+    refresh().catch(() => {});
+    return cache.data;
+  }
+  return refresh();
+}
+
+/** Warm the cache on server start so the first visitor doesn't wait. */
+export function warmup(): void {
+  refresh().catch(() => {});
 }
