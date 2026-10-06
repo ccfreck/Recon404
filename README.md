@@ -23,4 +23,7 @@ npm run build && npm start   # production
 
 ## How it works
 
-See [architecture.md](architecture.md). Planned AI summaries are tracked in [next_steps.md](next_steps.md).
+See [architecture.md](architecture.md). 
+
+## Next Steps
+Planned AI summaries are tracked in [next_steps.md](next_steps.md).
